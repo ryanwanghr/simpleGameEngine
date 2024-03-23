@@ -189,12 +189,33 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     win32LoadXInput();
     win32LoadAudio();
 
-
     int numChannels = 2;
-    int bitsPerSample = 8;
+    int monoBitsPerSample = 16;
     int samplesPerSecond = 48000;
-    int numBlockAlign = (bitsPerSample * numChannels)/8;
-    int avgBytesPerSec = samplesPerSecond * numBlockAlign;
+    int bytesPerSample = (monoBitsPerSample * numChannels)/8;
+    int avgBytesPerSec = samplesPerSecond * bytesPerSample;
+
+    int amplitude = 300;
+    int frequency = 440;
+    
+    pAudioData = VirtualAlloc(0, avgBytesPerSec, MEM_COMMIT, PAGE_READWRITE);
+
+    int samplesPerCycle = samplesPerSecond/frequency;
+    int samplesUntilChangeSign = samplesPerCycle/2;
+    bool positive = true;
+    for (int sampleCount = 0; sampleCount < samplesPerSecond; sampleCount++) {
+        int32_t* sample = pAudioData + sampleCount;
+        if (sampleCount%samplesUntilChangeSign == 0) {
+            positive = !positive;
+        }
+        if (positive) {
+            *sample = amplitude;
+        }
+        if (!positive) {
+            *sample = -amplitude;
+        }
+    }
+    for (int32_t* sample = pAudioData; sample 
     IXAudio2* pAudioInterface = nullptr;
     if (FAILED(CoInitializeEx(NULL, COINIT_MULTITHREADED))) {
         OutputDebugStringA("CoInitializeEx Failed\n");
@@ -220,8 +241,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     waveFormat.nChannels = numChannels;       
     waveFormat.nSamplesPerSec = samplesPerSecond;
     waveFormat.nAvgBytesPerSec = avgBytesPerSec;
-    waveFormat.nBlockAlign = numBlockAlign;
-    waveFormat.wBitsPerSample = bitsPerSample;
+    waveFormat.nBlockAlign = bytesPerSample;
+    waveFormat.wBitsPerSample = monoBitsPerSample;
     waveFormat.cbSize = 0;
 
     IXAudio2SourceVoice* pSourceVoice = nullptr;
@@ -231,10 +252,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         return 1;
     }
 
+    
+
+    
+
     XAUDIO2_BUFFER audioBuffer;          
     audioBuffer.Flags = 0;
-    audioBuffer.AudioBytes = samplesPerSecond*;
-    audioBuffer.
+    audioBuffer.AudioBytes = avgBytesPerSec;
+    audioBuffer.pAudioData = pAudioData;
     audioBuffer.
     audioBuffer.
     audioBuffer.
