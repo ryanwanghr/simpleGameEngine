@@ -27,22 +27,14 @@ X_INPUT_GET_STATE(x_input_get_state_stub) {
 global_variable XInputGetState_t *XInputGetState_ = &x_input_get_state_stub;
 #define XInputGetState XInputGetState_
 
-
 global_variable bool GlobalRunning = true;
 global_variable struct bitmapBuffer GlobalBitmapBuffer;
-
-internal void win32LoadAudio() {
-
-}
 
 internal void win32LoadXInput() {
     HMODULE libraryModule = LoadLibrary("xinput1_3.dll");
     if (libraryModule) {
         XInputGetState = (XInputGetState_t*) GetProcAddress(libraryModule, "XInputGetState");
     }
-}
-
-internal void win32InitSound() {
 }
 
 internal void win32MakePattern() {
@@ -187,23 +179,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     PSTR lpCmdLine, int nCmdShow)
 {
     win32LoadXInput();
-    win32LoadAudio();
 
     int numChannels = 2;
     int monoBitsPerSample = 16;
     int samplesPerSecond = 48000;
     int bytesPerSample = (monoBitsPerSample * numChannels)/8;
+    int numSamplesInAudioData = 100;
+    int sizeBytesAudioData = numSamplesInAudioData * bytesPerSample;
     int avgBytesPerSec = samplesPerSecond * bytesPerSample;
 
     int amplitude = 300;
     int frequency = 440;
     
-    pAudioData = VirtualAlloc(0, avgBytesPerSec, MEM_COMMIT, PAGE_READWRITE);
+    int32_t*  pAudioData = (int32_t*) VirtualAlloc(0, sizeBytesAudioData, MEM_COMMIT, PAGE_READWRITE);
 
     int samplesPerCycle = samplesPerSecond/frequency;
     int samplesUntilChangeSign = samplesPerCycle/2;
     bool positive = true;
-    for (int sampleCount = 0; sampleCount < samplesPerSecond; sampleCount++) {
+    for (int sampleCount = 0; sampleCount < numSamplesInAudioData; sampleCount++) {
         int32_t* sample = pAudioData + sampleCount;
         if (sampleCount%samplesUntilChangeSign == 0) {
             positive = !positive;
@@ -215,7 +208,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             *sample = -amplitude;
         }
     }
-    for (int32_t* sample = pAudioData; sample 
+
     IXAudio2* pAudioInterface = nullptr;
     if (FAILED(CoInitializeEx(NULL, COINIT_MULTITHREADED))) {
         OutputDebugStringA("CoInitializeEx Failed\n");
@@ -252,24 +245,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         return 1;
     }
 
-    
-
-    
-
     XAUDIO2_BUFFER audioBuffer;          
     audioBuffer.Flags = 0;
-    audioBuffer.AudioBytes = avgBytesPerSec;
-    audioBuffer.pAudioData = pAudioData;
-    audioBuffer.
-    audioBuffer.
-    audioBuffer.
-    audioBuffer.
-    audioBuffer.
-    audioBuffer.
-    audioBuffer.
-
+    audioBuffer.AudioBytes = sizeBytesAudioData;
+    audioBuffer.pAudioData = (BYTE*) pAudioData;
+    audioBuffer.PlayBegin = 0;
+    audioBuffer.PlayLength = 0;
+    audioBuffer.LoopBegin = 0;
+    audioBuffer.LoopLength = 0;
+    audioBuffer.LoopCount = XAUDIO2_LOOP_INFINITE;
+    audioBuffer.pContext = NULL;
     
-    pSourceVoice->SubmitSourceBuffer()
+    if (FAILED(pSourceVoice->SubmitSourceBuffer(&audioBuffer, 0))) {
+        GlobalRunning = false;
+        OutputDebugStringA("SubmitSourceBuffer failed");
+        return 1;
+    }
+
+    if (FAILED(pSourceVoice->Start(0))) {
+        OutputDebugStringA("pSrouceVoiceStart failed");
+        return 1;
+    }
 
     WNDCLASSEX windowClass = {};
     windowClass.cbSize = sizeof(WNDCLASSEX);
@@ -345,5 +341,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         win32PaintWindow(deviceContext, &clientRect);
         ReleaseDC(windowHandle, deviceContext);
     }
+    VirtualFree(pAudioData, 0, MEM_RELEASE);
     return 0;
 }
