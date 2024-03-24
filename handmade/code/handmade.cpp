@@ -173,32 +173,28 @@ LRESULT Wndproc(
     return result;
 }
 
+struct audioInfo {
+    int sampleRate;
+    int numChannels;
+    int bitsPerChannel;
+    int bytesPerSample;
+    int numSamplesInAudioData;
+    int avgBytesPerSec;
+    int sizeBytesAudioData;
+};
 
-
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
-    PSTR lpCmdLine, int nCmdShow)
-{
-    win32LoadXInput();
-
-    int numChannels = 2;
-    int monoBitsPerSample = 16;
-    int samplesPerSecond = 48000;
-    int bytesPerSample = (monoBitsPerSample * numChannels)/8;
-    int numSamplesInAudioData = 100;
-    int sizeBytesAudioData = numSamplesInAudioData * bytesPerSample;
-    int avgBytesPerSec = samplesPerSecond * bytesPerSample;
+int32_t* win32CreateAudioData(audioInfo* pAudioInfo) {
+    int32_t* pAudioData = (int32_t*) VirtualAlloc(0, pAudioInfo->sizeBytesAudioData, MEM_COMMIT, PAGE_READWRITE);
 
     int amplitude = 300;
     int frequency = 440;
-    
-    int32_t*  pAudioData = (int32_t*) VirtualAlloc(0, sizeBytesAudioData, MEM_COMMIT, PAGE_READWRITE);
+    int numSamplesInPeriod = (pAudioInfo->sampleRate)/frequency;
+    int numSamplesUntilChangeSign = numSamplesInPeriod/2;
 
-    int samplesPerCycle = samplesPerSecond/frequency;
-    int samplesUntilChangeSign = samplesPerCycle/2;
     bool positive = true;
-    for (int sampleCount = 0; sampleCount < numSamplesInAudioData; sampleCount++) {
+    for (int sampleCount = 0; sampleCount < (pAudioInfo->numSamplesInAudioData); sampleCount++) {
         int32_t* sample = pAudioData + sampleCount;
-        if (sampleCount%samplesUntilChangeSign == 0) {
+        if (sampleCount%numSamplesUntilChangeSign == 0) {
             positive = !positive;
         }
         if (positive) {
@@ -208,64 +204,109 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             *sample = -amplitude;
         }
     }
+    return pAudioData;
+}
+
+void win32InitializeAudio(audioInfo* audioInfo, 
+                          IXAudio2** ppAudioInterface, 
+                          IXAudio2MasteringVoice** ppMasteringVoice, 
+                          IXAudio2SourceVoice** ppSourceVoice) {
 
     IXAudio2* pAudioInterface = nullptr;
+    IXAudio2MasteringVoice* pMasterVoice = nullptr;
+    IXAudio2SourceVoice* pSourceVoice = nullptr;
+
     if (FAILED(CoInitializeEx(NULL, COINIT_MULTITHREADED))) {
         OutputDebugStringA("CoInitializeEx Failed\n");
         GlobalRunning = false;
-        return 1;
+        return;
     }
-
     if (FAILED(XAudio2Create(&pAudioInterface, 0, XAUDIO2_DEFAULT_PROCESSOR))) {
         OutputDebugStringA("XAudio2Create Failed\n");
         GlobalRunning = false;
-        return 1;
+        return;
     }
 
-    IXAudio2MasteringVoice* pMasterVoice = nullptr;
     if (FAILED(pAudioInterface->CreateMasteringVoice(&pMasterVoice))) {
         OutputDebugStringA("CreateMasteringVoice Failed\n");
         GlobalRunning = false;
-        return 1;
+        return;
     }
 
     WAVEFORMATEX waveFormat = {0}; 
     waveFormat.wFormatTag = WAVE_FORMAT_PCM; 
-    waveFormat.nChannels = numChannels;       
-    waveFormat.nSamplesPerSec = samplesPerSecond;
-    waveFormat.nAvgBytesPerSec = avgBytesPerSec;
-    waveFormat.nBlockAlign = bytesPerSample;
-    waveFormat.wBitsPerSample = monoBitsPerSample;
+    waveFormat.nChannels = audioInfo->numChannels;       
+    waveFormat.nSamplesPerSec = audioInfo->sampleRate;
+    waveFormat.nAvgBytesPerSec = audioInfo->avgBytesPerSec;
+    waveFormat.nBlockAlign = audioInfo->bytesPerSample;
+    waveFormat.wBitsPerSample = audioInfo->bitsPerChannel;
     waveFormat.cbSize = 0;
 
-    IXAudio2SourceVoice* pSourceVoice = nullptr;
     if (FAILED(pAudioInterface->CreateSourceVoice(&pSourceVoice, &waveFormat, 0, 1.0, 0, 0, 0))) {
         GlobalRunning = false;
         OutputDebugStringA("CreateSourceVoice Failed");
-        return 1;
+        return;
     }
+    *ppAudioInterface = pAudioInterface;
+    *ppMasteringVoice = pMasterVoice;
+    *ppSourceVoice = pSourceVoice;
+}
 
-    XAUDIO2_BUFFER audioBuffer;          
-    audioBuffer.Flags = 0;
-    audioBuffer.AudioBytes = sizeBytesAudioData;
-    audioBuffer.pAudioData = (BYTE*) pAudioData;
-    audioBuffer.PlayBegin = 0;
-    audioBuffer.PlayLength = 0;
-    audioBuffer.LoopBegin = 0;
-    audioBuffer.LoopLength = 0;
-    audioBuffer.LoopCount = XAUDIO2_LOOP_INFINITE;
-    audioBuffer.pContext = NULL;
-    
-    if (FAILED(pSourceVoice->SubmitSourceBuffer(&audioBuffer, 0))) {
+void win32StartPlayingAudio(XAUDIO2_BUFFER* pAudioBuffer, IXAudio2SourceVoice* pSourceVoice) {
+    if (FAILED(pSourceVoice->SubmitSourceBuffer(pAudioBuffer, 0))) {
         GlobalRunning = false;
         OutputDebugStringA("SubmitSourceBuffer failed");
-        return 1;
+        return;
     }
 
     if (FAILED(pSourceVoice->Start(0))) {
+        GlobalRunning = false;
         OutputDebugStringA("pSrouceVoiceStart failed");
-        return 1;
+        return;
     }
+
+}
+
+void win32CreateAudioBuffer(XAUDIO2_BUFFER* pAudioBuffer, int32_t* pAudioData, audioInfo* pAudioInfo) {
+    pAudioBuffer->Flags = 0;
+    pAudioBuffer->AudioBytes = pAudioInfo->sizeBytesAudioData;
+    pAudioBuffer->pAudioData = (BYTE*) pAudioData;
+    pAudioBuffer->PlayBegin = 0;
+    pAudioBuffer->PlayLength = 0;
+    pAudioBuffer->LoopBegin = 0;
+    pAudioBuffer->LoopLength = 0;
+    pAudioBuffer->LoopCount = XAUDIO2_LOOP_INFINITE;
+    pAudioBuffer->pContext = NULL;
+}
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
+    PSTR lpCmdLine, int nCmdShow)
+{
+    win32LoadXInput();
+
+    struct audioInfo audioInfo;
+    audioInfo.numChannels = 2;
+    audioInfo.bitsPerChannel = 16;
+    audioInfo.sampleRate = 48000;
+    audioInfo.bytesPerSample = (audioInfo.bitsPerChannel * audioInfo.numChannels)/8;
+// will remove these when not doing testing anymore
+    int amplitude = 300;
+    int frequency = 440;
+    int numSamplesInPeriod = audioInfo.sampleRate/frequency;
+    int numSamplesUntilChangeSign = numSamplesInPeriod/2;
+
+    audioInfo.numSamplesInAudioData = numSamplesUntilChangeSign*2;
+    audioInfo.sizeBytesAudioData = audioInfo.numSamplesInAudioData * audioInfo.bytesPerSample;
+    audioInfo.avgBytesPerSec = audioInfo.sampleRate * audioInfo.bytesPerSample;
+    
+    IXAudio2* pAudioInterface = nullptr;
+    IXAudio2MasteringVoice* pMasterVoice = nullptr;
+    IXAudio2SourceVoice* pSourceVoice = nullptr;
+    win32InitializeAudio(&audioInfo, &pAudioInterface, &pMasterVoice, &pSourceVoice);
+    int32_t*  pAudioData = win32CreateAudioData(&audioInfo);
+    XAUDIO2_BUFFER audioBuffer;
+    win32CreateAudioBuffer(&audioBuffer, pAudioData, &audioInfo);
+    win32StartPlayingAudio(&audioBuffer, pSourceVoice);
 
     WNDCLASSEX windowClass = {};
     windowClass.cbSize = sizeof(WNDCLASSEX);
@@ -341,6 +382,5 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         win32PaintWindow(deviceContext, &clientRect);
         ReleaseDC(windowHandle, deviceContext);
     }
-    VirtualFree(pAudioData, 0, MEM_RELEASE);
     return 0;
 }
