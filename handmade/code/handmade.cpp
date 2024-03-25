@@ -3,11 +3,13 @@
 #include <stdint.h>
 #include <xaudio2.h>
 #include <xinput.h>
+#include <math.h>
 
 
 #define internal static
 #define global_variable static
 #define local_persist static 
+#define MATHPI 3.14159265359
 
 struct bitmapBuffer {
     BITMAPINFO info;
@@ -186,23 +188,26 @@ struct audioInfo {
 int32_t* win32CreateAudioData(audioInfo* pAudioInfo) {
     int32_t* pAudioData = (int32_t*) VirtualAlloc(0, pAudioInfo->sizeBytesAudioData, MEM_COMMIT, PAGE_READWRITE);
 
-    int amplitude = 300;
+    int amplitude = 2000;
     int frequency = 440;
     int numSamplesInPeriod = (pAudioInfo->sampleRate)/frequency;
-    int numSamplesUntilChangeSign = numSamplesInPeriod/2;
 
-    bool positive = true;
+    // bool positive = true;
+    // for (int sampleCount = 0; sampleCount < (pAudioInfo->numSamplesInAudioData); sampleCount++) {
+    //     int32_t* sample = pAudioData + sampleCount;
+    //     if (sampleCount%numSamplesUntilChangeSign == 0) {
+    //         positive = !positive;
+    //     }
+    //     if (positive) {
+    //         *sample = amplitude;
+    //     }
+    //     if (!positive) {
+    //         *sample = -amplitude;
+    //     }
+    // }
     for (int sampleCount = 0; sampleCount < (pAudioInfo->numSamplesInAudioData); sampleCount++) {
         int32_t* sample = pAudioData + sampleCount;
-        if (sampleCount%numSamplesUntilChangeSign == 0) {
-            positive = !positive;
-        }
-        if (positive) {
-            *sample = amplitude;
-        }
-        if (!positive) {
-            *sample = -amplitude;
-        }
+        *sample = (sinf((sampleCount*2*MATHPI)/numSamplesInPeriod)) * amplitude;
     }
     return pAudioData;
 }
@@ -261,10 +266,37 @@ void win32StartPlayingAudio(XAUDIO2_BUFFER* pAudioBuffer, IXAudio2SourceVoice* p
 
     if (FAILED(pSourceVoice->Start(0))) {
         GlobalRunning = false;
-        OutputDebugStringA("pSrouceVoiceStart failed");
+        OutputDebugStringA("pSourceVoiceStart failed");
         return;
     }
 
+}
+
+void win32UpdateAudio(int32_t* pAudioData, audioInfo* pAudioInfo, IXAudio2SourceVoice* pSourceVoice) {
+
+    int amplitude = 2000;
+    int frequency = 440;
+    int numSamplesInPeriod = (pAudioInfo->sampleRate)/frequency;
+    
+    XAUDIO2_VOICE_STATE voiceState;
+    pSourceVoice->GetState(&voiceState, 0);
+    int delaySamples = (pAudioInfo->sampleRate * 15)/60;
+    int positionOfPlayCursorSamples = voiceState.SamplesPlayed % pAudioInfo->numSamplesInAudioData;
+    int positionOfSinWaveSamples = (voiceState.SamplesPlayed + delaySamples) % numSamplesInPeriod;
+
+
+    int64_t counterForSine = positionOfSinWaveSamples;
+    for (int startSample = positionOfPlayCursorSamples + delaySamples; startSample < pAudioInfo->numSamplesInAudioData; startSample++) {
+        float radianLocation = ((counterForSine % numSamplesInPeriod)*2*MATHPI)/numSamplesInPeriod;
+        *(pAudioData + startSample) = (int) (sinf(radianLocation) * amplitude);
+        counterForSine++;
+    }
+
+    for (int sample = 0; sample < positionOfPlayCursorSamples; sample++) {
+        float radianLocation = ((counterForSine % numSamplesInPeriod)*2*MATHPI)/numSamplesInPeriod;
+        *(pAudioData + sample) = (int) (sinf(radianLocation) * amplitude);
+        counterForSine++;
+    }
 }
 
 void win32CreateAudioBuffer(XAUDIO2_BUFFER* pAudioBuffer, int32_t* pAudioData, audioInfo* pAudioInfo) {
@@ -290,12 +322,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     audioInfo.sampleRate = 48000;
     audioInfo.bytesPerSample = (audioInfo.bitsPerChannel * audioInfo.numChannels)/8;
 // will remove these when not doing testing anymore
-    int amplitude = 300;
+    int amplitude = 2000;
     int frequency = 440;
     int numSamplesInPeriod = audioInfo.sampleRate/frequency;
     int numSamplesUntilChangeSign = numSamplesInPeriod/2;
 
-    audioInfo.numSamplesInAudioData = numSamplesUntilChangeSign*2;
+    audioInfo.numSamplesInAudioData = audioInfo.sampleRate;
     audioInfo.sizeBytesAudioData = audioInfo.numSamplesInAudioData * audioInfo.bytesPerSample;
     audioInfo.avgBytesPerSec = audioInfo.sampleRate * audioInfo.bytesPerSample;
     
@@ -373,6 +405,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
             state.Gamepad.sThumbRX;
             state.Gamepad.sThumbRY;
         }
+
+        //audio
+        win32UpdateAudio(pAudioData, &audioInfo, pSourceVoice);
 
         win32MakePattern();
         
